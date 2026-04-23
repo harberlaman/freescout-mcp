@@ -87,13 +87,18 @@ export class FreeScoutClient {
   async listConversations(
     params: ConversationListParams = {}
   ): Promise<PaginatedResponse<Conversation>> {
+    // Check if we need to filter for unassigned conversations (assignedTo=0)
+    // The FreeScout API doesn't properly handle assignedTo=0, so we filter client-side
+    const filterUnassigned = params.assignedTo === 0;
+
     const queryParams: Record<string, unknown> = {
       mailboxId: params.mailboxId,
       folderId: params.folderId,
       status: params.status,
       state: params.state,
       type: params.type,
-      assignedTo: params.assignedTo,
+      // Omit assignedTo if filtering for unassigned (will filter client-side)
+      assignedTo: filterUnassigned ? undefined : params.assignedTo,
       customerEmail: params.customerEmail,
       customerPhone: params.customerPhone,
       customerId: params.customerId,
@@ -112,9 +117,38 @@ export class FreeScoutClient {
     };
 
     const queryString = this.buildQueryString(queryParams);
-    return this.request<PaginatedResponse<Conversation>>(
+    const response = await this.request<PaginatedResponse<Conversation>>(
       `/api/conversations${queryString}`
     );
+
+    // Apply client-side filtering for unassigned conversations if needed
+    if (filterUnassigned) {
+      const conversationsKey = Object.keys(response._embedded)[0];
+      const allConversations = response._embedded[conversationsKey] || [];
+
+      // Filter to only unassigned conversations (where assignee is undefined/null)
+      const unassignedConversations = allConversations.filter(
+        (conv) => !conv.assignee
+      );
+
+      // Update pagination metadata
+      const filteredTotalElements = unassignedConversations.length;
+      const pageSize = response.page.size;
+      const filteredTotalPages = Math.ceil(filteredTotalElements / (pageSize || 1));
+
+      return {
+        _embedded: {
+          [conversationsKey]: unassignedConversations,
+        },
+        page: {
+          ...response.page,
+          totalElements: filteredTotalElements,
+          totalPages: filteredTotalPages,
+        },
+      };
+    }
+
+    return response;
   }
 
   async getConversation(
