@@ -1,8 +1,9 @@
 # Dependencies
 node_modules/
 
-# Build output
+# Build output (except bundle for global install)
 dist/
+!dist/bundle.js
 
 # Temp files
 temp/
