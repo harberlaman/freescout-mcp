@@ -1,9 +1,10 @@
 # Dependencies
 node_modules/
 
-# Build output (except bundle for global install)
-dist/
-!dist/bundle.js
+# Build output (intermediate TS compilation only, bundle is tracked)
+dist/*.d.ts
+dist/*.d.ts.map
+dist/index.js
 
 # Temp files
 temp/
