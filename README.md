@@ -15,10 +15,7 @@ A TypeScript MCP (Model Context Protocol) server for [FreeScout](https://freesco
 ## Installation
 
 ```bash
-git clone https://github.com/harberlaman/freescout-mcp.git
-cd freescout-mcp
-npm install
-npm run build
+npm install -g freescout-mcp
 ```
 
 ## Configuration
@@ -46,8 +43,7 @@ Add to your Claude Desktop config:
 {
   "mcpServers": {
     "freescout": {
-      "command": "node",
-      "args": ["/path/to/freescout-mcp/dist/index.js"]
+      "command": "freescout-mcp"
     }
   }
 }
