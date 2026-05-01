@@ -19,6 +19,21 @@ import {
   createThread,
   type CreateThreadInput,
 } from "./create-thread.js";
+import {
+  createConversationSchema,
+  createConversation,
+  type CreateConversationInput,
+} from "./create-conversation.js";
+import {
+  updateConversationSchema,
+  updateConversation,
+  type UpdateConversationInput,
+} from "./update-conversation.js";
+import {
+  deleteConversationSchema,
+  deleteConversation,
+  type DeleteConversationInput,
+} from "./delete-conversation.js";
 import { searchSchema, search, type SearchInput } from "./search.js";
 import { listTagsSchema, listTags, type ListTagsInput } from "./list-tags.js";
 import { setTagsSchema, setTags, type SetTagsInput } from "./set-tags.js";
@@ -60,6 +75,18 @@ export const toolDefinitions: ToolDefinition[] = [
     inputSchema: createThreadSchema,
   },
   {
+    name: "create_conversation",
+    description:
+      "Create a new conversation in FreeScout. Requires type (email/phone/chat), mailboxId, subject, customer (id or email), and at least one thread. Set imported=true to suppress outgoing emails.",
+    inputSchema: createConversationSchema,
+  },
+  {
+    name: "update_conversation",
+    description:
+      "Update a FreeScout conversation. Can change status, assignee, mailbox, customer, subject, and custom fields. The byUser parameter is required when changing status, assignTo, or mailboxId.",
+    inputSchema: updateConversationSchema,
+  },
+  {
     name: "search",
     description:
       "Full-text search across FreeScout tickets via Meilisearch. Returns ranked results with filters for status, mailbox, user, and customer. Requires Meilisearch to be configured.",
@@ -79,9 +106,17 @@ export const toolDefinitions: ToolDefinition[] = [
   },
 ];
 
+export const deleteConversationDefinition: ToolDefinition = {
+  name: "delete_conversation",
+  description:
+    "Permanently delete a FreeScout conversation. WARNING: This is irreversible. Only available when FREESCOUT_ALLOW_DELETE=true is set.",
+  inputSchema: deleteConversationSchema,
+};
+
 export interface ToolContext {
   freescoutClient: FreeScoutClient;
   meilisearchClient?: MeilisearchClient;
+  allowDelete?: boolean;
 }
 
 export async function handleToolCall(
@@ -109,6 +144,23 @@ export async function handleToolCall(
     case "create_thread": {
       const input = createThreadSchema.parse(args) as CreateThreadInput;
       return createThread(context.freescoutClient, input);
+    }
+    case "create_conversation": {
+      const input = createConversationSchema.parse(args) as CreateConversationInput;
+      return createConversation(context.freescoutClient, input);
+    }
+    case "update_conversation": {
+      const input = updateConversationSchema.parse(args) as UpdateConversationInput;
+      return updateConversation(context.freescoutClient, input);
+    }
+    case "delete_conversation": {
+      if (!context.allowDelete) {
+        throw new Error(
+          "delete_conversation is disabled. Set FREESCOUT_ALLOW_DELETE=true to enable it."
+        );
+      }
+      const input = deleteConversationSchema.parse(args) as DeleteConversationInput;
+      return deleteConversation(context.freescoutClient, input);
     }
     case "search": {
       if (!context.meilisearchClient) {

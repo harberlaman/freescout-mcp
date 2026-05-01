@@ -12,6 +12,7 @@ import { FreeScoutClient } from "./clients/freescout.js";
 import { MeilisearchClient } from "./clients/meilisearch.js";
 import {
   toolDefinitions,
+  deleteConversationDefinition,
   handleToolCall,
   getToolJsonSchema,
   type ToolContext,
@@ -42,6 +43,7 @@ async function main() {
   const toolContext: ToolContext = {
     freescoutClient,
     meilisearchClient,
+    allowDelete: config.allowDelete,
   };
 
   // Create MCP server
@@ -59,8 +61,12 @@ async function main() {
 
   // Register tool listing handler
   server.setRequestHandler(ListToolsRequestSchema, async () => {
+    const allTools = config.allowDelete
+      ? [...toolDefinitions, deleteConversationDefinition]
+      : toolDefinitions;
+
     return {
-      tools: toolDefinitions.map((tool) => ({
+      tools: allTools.map((tool) => ({
         name: tool.name,
         description: tool.description,
         inputSchema: getToolJsonSchema(tool),

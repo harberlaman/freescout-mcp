@@ -205,3 +205,43 @@ export interface CreateThreadResponse {
   type: string;
   status: string;
 }
+
+export interface CreateConversationParams {
+  type: "email" | "phone" | "chat";
+  mailboxId: number;
+  subject: string;
+  customer: { id?: number; email?: string };
+  threads: {
+    type: "customer" | "message" | "note";
+    text: string;
+    user?: number;
+    customer?: { email: string; firstName?: string };
+    to?: string[];
+    cc?: string[];
+    bcc?: string[];
+    createdAt?: string;
+    attachments?: AttachmentInput[];
+  }[];
+  imported?: boolean;
+  assignTo?: number;
+  status?: "active" | "pending" | "closed";
+  customFields?: { id: number; value: string }[];
+  createdAt?: string;
+  closedAt?: string;
+}
+
+export interface CreateConversationResponse {
+  conversationId: number | null;
+  status: string;
+}
+
+export interface UpdateConversationParams {
+  conversationId: number;
+  byUser?: number;
+  status?: "active" | "pending" | "closed" | "spam";
+  assignTo?: number;
+  mailboxId?: number;
+  customerId?: number;
+  subject?: string;
+  customFields?: { id: number; value: string }[];
+}

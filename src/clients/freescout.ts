@@ -8,6 +8,9 @@ import type {
   ConversationListParams,
   CreateThreadParams,
   CreateThreadResponse,
+  CreateConversationParams,
+  CreateConversationResponse,
+  UpdateConversationParams,
 } from "../types/freescout.js";
 
 export class FreeScoutClient {
@@ -251,6 +254,73 @@ export class FreeScoutClient {
     await this.request(`/api/conversations/${conversationId}/tags`, {
       method: "PUT",
       body: JSON.stringify({ tags }),
+    });
+  }
+
+  async createConversation(params: CreateConversationParams): Promise<CreateConversationResponse> {
+    const body: Record<string, unknown> = {
+      type: params.type,
+      mailboxId: params.mailboxId,
+      subject: params.subject,
+      customer: params.customer,
+      threads: params.threads,
+    };
+
+    if (params.imported !== undefined) body.imported = params.imported;
+    if (params.assignTo !== undefined) body.assignTo = params.assignTo;
+    if (params.status) body.status = params.status;
+    if (params.customFields && params.customFields.length > 0) body.customFields = params.customFields;
+    if (params.createdAt) body.createdAt = params.createdAt;
+    if (params.closedAt) body.closedAt = params.closedAt;
+
+    const response = await fetch(
+      `${this.baseUrl}/api/conversations`,
+      {
+        method: "POST",
+        headers: this.getHeaders(true),
+        body: JSON.stringify(body),
+      }
+    );
+
+    if (!response.ok) {
+      let errorMessage = `HTTP ${response.status}`;
+      try {
+        const errorBody = await response.text();
+        if (errorBody) errorMessage += `: ${errorBody}`;
+      } catch {
+        // Ignore error reading body
+      }
+      throw new FreeScoutError(errorMessage, response.status, "/api/conversations");
+    }
+
+    const conversationId = response.headers.get("Resource-ID");
+    return {
+      conversationId: conversationId ? parseInt(conversationId, 10) : null,
+      status: "created",
+    };
+  }
+
+  async updateConversation(params: UpdateConversationParams): Promise<void> {
+    const { conversationId, ...bodyParams } = params;
+
+    const body: Record<string, unknown> = {};
+    if (bodyParams.byUser !== undefined) body.byUser = bodyParams.byUser;
+    if (bodyParams.status) body.status = bodyParams.status;
+    if (bodyParams.assignTo !== undefined) body.assignTo = bodyParams.assignTo;
+    if (bodyParams.mailboxId !== undefined) body.mailboxId = bodyParams.mailboxId;
+    if (bodyParams.customerId !== undefined) body.customerId = bodyParams.customerId;
+    if (bodyParams.subject) body.subject = bodyParams.subject;
+    if (bodyParams.customFields && bodyParams.customFields.length > 0) body.customFields = bodyParams.customFields;
+
+    await this.request(`/api/conversations/${conversationId}`, {
+      method: "PUT",
+      body: JSON.stringify(body),
+    });
+  }
+
+  async deleteConversation(id: number): Promise<void> {
+    await this.request(`/api/conversations/${id}`, {
+      method: "DELETE",
     });
   }
 }

@@ -9576,15 +9576,44 @@ var MeilisearchConfigSchema = z.object({
 var ConfigSchema = z.object({
   baseUrl: z.string().url(),
   apiKey: z.string().min(1),
-  meilisearch: MeilisearchConfigSchema.optional()
+  meilisearch: MeilisearchConfigSchema.optional(),
+  allowDelete: z.boolean().optional().default(false)
 });
 function getConfigPath() {
   return join(homedir(), ".config", "freescout-mcp", "config.json");
 }
+function loadFromEnv() {
+  const baseUrl = process.env.FREESCOUT_BASE_URL;
+  const apiKey = process.env.FREESCOUT_API_KEY;
+  if (!baseUrl || !apiKey) {
+    return null;
+  }
+  const config = { baseUrl, apiKey };
+  const meilisearchHost = process.env.MEILISEARCH_HOST;
+  const meilisearchApiKey = process.env.MEILISEARCH_API_KEY;
+  if (meilisearchHost && meilisearchApiKey) {
+    config.meilisearch = { host: meilisearchHost, apiKey: meilisearchApiKey };
+  }
+  const allowDelete = process.env.FREESCOUT_ALLOW_DELETE;
+  if (allowDelete !== void 0) {
+    config.allowDelete = allowDelete === "true";
+  }
+  return config;
+}
 function loadConfig() {
+  const envConfig = loadFromEnv();
+  if (envConfig) {
+    const result2 = ConfigSchema.safeParse(envConfig);
+    if (!result2.success) {
+      const issues = result2.error.issues.map((issue) => `  - ${issue.path.join(".")}: ${issue.message}`).join("\n");
+      throw new ConfigError(`Invalid environment variable configuration:
+${issues}`);
+    }
+    return result2.data;
+  }
   const configPath = getConfigPath();
   if (!existsSync(configPath)) {
-    throw new ConfigError(`Configuration file not found at ${configPath}. Please create the file with your FreeScout API credentials.`);
+    throw new ConfigError(`Configuration not found. Either set FREESCOUT_BASE_URL and FREESCOUT_API_KEY environment variables, or create a config file at ${configPath}.`);
   }
   let rawConfig;
   try {
@@ -9790,6 +9819,74 @@ var FreeScoutClient = class {
       body: JSON.stringify({ tags })
     });
   }
+  async createConversation(params) {
+    const body = {
+      type: params.type,
+      mailboxId: params.mailboxId,
+      subject: params.subject,
+      customer: params.customer,
+      threads: params.threads
+    };
+    if (params.imported !== void 0)
+      body.imported = params.imported;
+    if (params.assignTo !== void 0)
+      body.assignTo = params.assignTo;
+    if (params.status)
+      body.status = params.status;
+    if (params.customFields && params.customFields.length > 0)
+      body.customFields = params.customFields;
+    if (params.createdAt)
+      body.createdAt = params.createdAt;
+    if (params.closedAt)
+      body.closedAt = params.closedAt;
+    const response = await fetch(`${this.baseUrl}/api/conversations`, {
+      method: "POST",
+      headers: this.getHeaders(true),
+      body: JSON.stringify(body)
+    });
+    if (!response.ok) {
+      let errorMessage = `HTTP ${response.status}`;
+      try {
+        const errorBody = await response.text();
+        if (errorBody)
+          errorMessage += `: ${errorBody}`;
+      } catch {
+      }
+      throw new FreeScoutError(errorMessage, response.status, "/api/conversations");
+    }
+    const conversationId = response.headers.get("Resource-ID");
+    return {
+      conversationId: conversationId ? parseInt(conversationId, 10) : null,
+      status: "created"
+    };
+  }
+  async updateConversation(params) {
+    const { conversationId, ...bodyParams } = params;
+    const body = {};
+    if (bodyParams.byUser !== void 0)
+      body.byUser = bodyParams.byUser;
+    if (bodyParams.status)
+      body.status = bodyParams.status;
+    if (bodyParams.assignTo !== void 0)
+      body.assignTo = bodyParams.assignTo;
+    if (bodyParams.mailboxId !== void 0)
+      body.mailboxId = bodyParams.mailboxId;
+    if (bodyParams.customerId !== void 0)
+      body.customerId = bodyParams.customerId;
+    if (bodyParams.subject)
+      body.subject = bodyParams.subject;
+    if (bodyParams.customFields && bodyParams.customFields.length > 0)
+      body.customFields = bodyParams.customFields;
+    await this.request(`/api/conversations/${conversationId}`, {
+      method: "PUT",
+      body: JSON.stringify(body)
+    });
+  }
+  async deleteConversation(id) {
+    await this.request(`/api/conversations/${id}`, {
+      method: "DELETE"
+    });
+  }
 };
 
 // dist/clients/meilisearch.js
@@ -9922,11 +10019,48 @@ async function listConversations(client, input) {
 // dist/tools/get-conversation.js
 var getConversationSchema = z.object({
   id: z.number().describe("The conversation ID"),
-  embed: z.string().optional().default("threads").describe("Comma-separated list of related data to include: threads, timelogs, tags (default: threads)")
+  embed: z.string().optional().default("threads").describe("Comma-separated list of related data to include: threads, timelogs, tags (default: threads)"),
+  threadTypes: z.string().optional().default("customer,message,note").describe('Comma-separated thread types to include (default: "customer,message,note" which excludes lineitem system events). Pass "all" to include everything.'),
+  cleanHtml: z.boolean().optional().default(false).describe("Strip HTML tags from thread bodies and decode common entities, returning plain text"),
+  fields: z.string().optional().describe('Comma-separated top-level conversation fields to return (e.g. "id,number,subject,status,_embedded"). Omit to return all fields.'),
+  threadFields: z.string().optional().describe('Comma-separated fields to keep on each thread object (e.g. "id,type,body,createdAt"). Omit to return all fields.')
 });
+function stripHtml(html) {
+  return html.replace(/<br\s*\/?>/gi, "\n").replace(/<\/p>/gi, "\n\n").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/\n{3,}/g, "\n\n").trim();
+}
+function pickFields(obj, fieldList) {
+  const result = {};
+  for (const field of fieldList) {
+    const key = field.trim();
+    if (key in obj) {
+      result[key] = obj[key];
+    }
+  }
+  return result;
+}
 async function getConversation(client, input) {
   const result = await client.getConversation(input.id, input.embed);
-  return JSON.stringify(result, null, 2);
+  let conversation = result;
+  if (result._embedded?.threads && input.threadTypes !== "all") {
+    const allowedTypes = input.threadTypes.split(",").map((t) => t.trim());
+    result._embedded.threads = result._embedded.threads.filter((thread) => allowedTypes.includes(thread.type));
+  }
+  if (input.cleanHtml && result._embedded?.threads) {
+    for (const thread of result._embedded.threads) {
+      if (thread.body) {
+        thread.body = stripHtml(thread.body);
+      }
+    }
+  }
+  if (input.threadFields && result._embedded?.threads) {
+    const threadFieldList = input.threadFields.split(",");
+    result._embedded.threads = result._embedded.threads.map((thread) => pickFields(thread, threadFieldList));
+  }
+  if (input.fields) {
+    const fieldList = input.fields.split(",");
+    conversation = pickFields(conversation, fieldList);
+  }
+  return JSON.stringify(conversation, null, 2);
 }
 
 // dist/tools/list-users.js
@@ -10000,6 +10134,81 @@ async function createThread(client, input) {
   return JSON.stringify(result, null, 2);
 }
 
+// dist/tools/create-conversation.js
+var attachmentSchema = z.object({
+  fileName: z.string().describe("File name"),
+  mimeType: z.string().describe("MIME type"),
+  data: z.string().optional().describe("Base64-encoded file content"),
+  fileUrl: z.string().optional().describe("URL to download the file from")
+});
+var threadSchema = z.object({
+  type: z.enum(["customer", "message", "note"]).describe("Thread type"),
+  text: z.string().describe("Message body content"),
+  user: z.number().optional().describe("User ID (required for message and note types)"),
+  customer: z.object({
+    email: z.string().describe("Customer email"),
+    firstName: z.string().optional().describe("Customer first name")
+  }).optional().describe("Customer info (required for customer thread type)"),
+  to: z.array(z.string()).optional().describe("TO email addresses"),
+  cc: z.array(z.string()).optional().describe("CC email addresses"),
+  bcc: z.array(z.string()).optional().describe("BCC email addresses"),
+  createdAt: z.string().optional().describe("ISO 8601 datetime (only valid when imported=true)"),
+  attachments: z.array(attachmentSchema).optional().describe("File attachments")
+});
+var customFieldSchema = z.object({
+  id: z.number().describe("Custom field ID"),
+  value: z.string().describe("Custom field value")
+});
+var createConversationSchema = z.object({
+  type: z.enum(["email", "phone", "chat"]).describe("Conversation type"),
+  mailboxId: z.number().describe("Mailbox ID to create the conversation in"),
+  subject: z.string().describe("Conversation subject line"),
+  customer: z.object({
+    id: z.number().optional().describe("Existing customer ID"),
+    email: z.string().optional().describe("Customer email (creates customer if not found)")
+  }).describe("Customer - provide either id or email"),
+  threads: z.array(threadSchema).min(1).describe("At least one thread is required"),
+  imported: z.boolean().optional().describe("When true, suppresses outgoing emails and auto-replies"),
+  assignTo: z.number().optional().describe("User ID to assign the conversation to"),
+  status: z.enum(["active", "pending", "closed"]).optional().describe("Conversation status"),
+  customFields: z.array(customFieldSchema).optional().describe("Custom field values"),
+  createdAt: z.string().optional().describe("ISO 8601 datetime"),
+  closedAt: z.string().optional().describe("ISO 8601 datetime (only valid for imported conversations)")
+});
+async function createConversation(client, input) {
+  const result = await client.createConversation(input);
+  return JSON.stringify(result, null, 2);
+}
+
+// dist/tools/update-conversation.js
+var customFieldSchema2 = z.object({
+  id: z.number().describe("Custom field ID"),
+  value: z.string().describe("Custom field value")
+});
+var updateConversationSchema = z.object({
+  conversationId: z.number().describe("The conversation ID to update"),
+  byUser: z.number().optional().describe("User ID performing the change. Required when changing status, assignTo, or mailboxId."),
+  status: z.enum(["active", "pending", "closed", "spam"]).optional().describe("New conversation status"),
+  assignTo: z.number().optional().describe("User ID to reassign the conversation to"),
+  mailboxId: z.number().optional().describe("Move conversation to a different mailbox"),
+  customerId: z.number().optional().describe("Change the associated customer"),
+  subject: z.string().optional().describe("Update the conversation subject"),
+  customFields: z.array(customFieldSchema2).optional().describe("Custom field values")
+});
+async function updateConversation(client, input) {
+  await client.updateConversation(input);
+  return JSON.stringify({ conversationId: input.conversationId, status: "updated" }, null, 2);
+}
+
+// dist/tools/delete-conversation.js
+var deleteConversationSchema = z.object({
+  conversationId: z.number().describe("The conversation ID to delete. WARNING: This permanently deletes the conversation and is irreversible.")
+});
+async function deleteConversation(client, input) {
+  await client.deleteConversation(input.conversationId);
+  return JSON.stringify({ conversationId: input.conversationId, status: "deleted" }, null, 2);
+}
+
 // dist/tools/search.js
 var searchSchema = z.object({
   query: z.string().describe("Search query string"),
@@ -10068,6 +10277,16 @@ var toolDefinitions = [
     inputSchema: createThreadSchema
   },
   {
+    name: "create_conversation",
+    description: "Create a new conversation in FreeScout. Requires type (email/phone/chat), mailboxId, subject, customer (id or email), and at least one thread. Set imported=true to suppress outgoing emails.",
+    inputSchema: createConversationSchema
+  },
+  {
+    name: "update_conversation",
+    description: "Update a FreeScout conversation. Can change status, assignee, mailbox, customer, subject, and custom fields. The byUser parameter is required when changing status, assignTo, or mailboxId.",
+    inputSchema: updateConversationSchema
+  },
+  {
     name: "search",
     description: "Full-text search across FreeScout tickets via Meilisearch. Returns ranked results with filters for status, mailbox, user, and customer. Requires Meilisearch to be configured.",
     inputSchema: searchSchema
@@ -10083,6 +10302,11 @@ var toolDefinitions = [
     inputSchema: setTagsSchema
   }
 ];
+var deleteConversationDefinition = {
+  name: "delete_conversation",
+  description: "Permanently delete a FreeScout conversation. WARNING: This is irreversible. Only available when FREESCOUT_ALLOW_DELETE=true is set.",
+  inputSchema: deleteConversationSchema
+};
 async function handleToolCall(name, args, context) {
   switch (name) {
     case "list_conversations": {
@@ -10104,6 +10328,21 @@ async function handleToolCall(name, args, context) {
     case "create_thread": {
       const input = createThreadSchema.parse(args);
       return createThread(context.freescoutClient, input);
+    }
+    case "create_conversation": {
+      const input = createConversationSchema.parse(args);
+      return createConversation(context.freescoutClient, input);
+    }
+    case "update_conversation": {
+      const input = updateConversationSchema.parse(args);
+      return updateConversation(context.freescoutClient, input);
+    }
+    case "delete_conversation": {
+      if (!context.allowDelete) {
+        throw new Error("delete_conversation is disabled. Set FREESCOUT_ALLOW_DELETE=true to enable it.");
+      }
+      const input = deleteConversationSchema.parse(args);
+      return deleteConversation(context.freescoutClient, input);
     }
     case "search": {
       if (!context.meilisearchClient) {
@@ -10242,7 +10481,8 @@ async function main() {
   }
   const toolContext = {
     freescoutClient,
-    meilisearchClient
+    meilisearchClient,
+    allowDelete: config.allowDelete
   };
   const server = new Server({
     name: "freescout-mcp",
@@ -10253,8 +10493,9 @@ async function main() {
     }
   });
   server.setRequestHandler(ListToolsRequestSchema, async () => {
+    const allTools = config.allowDelete ? [...toolDefinitions, deleteConversationDefinition] : toolDefinitions;
     return {
-      tools: toolDefinitions.map((tool) => ({
+      tools: allTools.map((tool) => ({
         name: tool.name,
         description: tool.description,
         inputSchema: getToolJsonSchema(tool)

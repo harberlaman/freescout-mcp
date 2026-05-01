@@ -15,6 +15,10 @@ temp/
 .vscode/
 .idea/
 
+# Local MCP config (may contain API keys)
+.mcp.json
+.claude/
+
 # OS files
 .DS_Store
 Thumbs.db
