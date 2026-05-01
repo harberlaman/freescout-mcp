@@ -18,61 +18,42 @@ A TypeScript MCP (Model Context Protocol) server for [FreeScout](https://freesco
 npm install -g freescout-mcp
 ```
 
-## Configuration
+## Usage
 
-Create `~/.config/freescout-mcp/config.json`:
-
-```json
-{
-  "baseUrl": "https://your-freescout.com",
-  "apiKey": "your-api-key",
-  "meilisearch": {
-    "host": "http://localhost:7700",
-    "apiKey": "your-meilisearch-key"
-  }
-}
-```
-
-The `meilisearch` section is optional - only needed if you want full-text search.
-
-## Usage with Claude Desktop
-
-Add to your Claude Desktop config:
+Add to your MCP client config (Claude Desktop, Claude Code, or any MCP-compatible client):
 
 ```json
 {
   "mcpServers": {
     "freescout": {
-      "command": "freescout-mcp"
-    }
-  }
-}
-```
-
-## Local Development / Testing with Claude Code
-
-Create a `.mcp.json` in the project root (this file is gitignored — do not commit it):
-
-```json
-{
-  "mcpServers": {
-    "freescout-dev": {
-      "command": "node",
-      "args": ["/absolute/path/to/FreescoutMCP/dist/bundle.js"],
+      "command": "freescout-mcp",
       "env": {
         "FREESCOUT_BASE_URL": "https://your-freescout.com",
-        "FREESCOUT_API_KEY": "your-api-key",
-        "FREESCOUT_ALLOW_DELETE": "true"
+        "FREESCOUT_API_KEY": "your-api-key"
       }
     }
   }
 }
 ```
 
-Then build the bundle and connect via `/mcp` in Claude Code:
+To enable conversation deletion, add `FREESCOUT_ALLOW_DELETE=true` to the `env` block.
 
-```bash
-npx tsc && node node_modules/esbuild/bin/esbuild dist/index.js --bundle --platform=node --format=esm --outfile=dist/bundle.js --banner:js="import{createRequire}from'module';const require=createRequire(import.meta.url);"
+### Full-Text Search (Optional)
+
+The `search` tool requires two things:
+
+1. The [FreeScout Faster Search module](https://freescout.net/module/faster-search/) installed on your FreeScout instance
+2. A running [Meilisearch](https://www.meilisearch.com/) server configured with that module
+
+If both are in place, add the Meilisearch connection to your env:
+
+```json
+"env": {
+  "FREESCOUT_BASE_URL": "https://your-freescout.com",
+  "FREESCOUT_API_KEY": "your-api-key",
+  "MEILISEARCH_HOST": "http://your-meilisearch-host:7700",
+  "MEILISEARCH_API_KEY": "your-meilisearch-key"
+}
 ```
 
 ## Available Tools
